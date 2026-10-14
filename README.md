@@ -1,5 +1,15 @@
 # FITTRACK GYM
 
+FITTRACK GYM is a gym and fitness club website with information about the club, trainers, memberships, and fitness products. Its Flask backend provides account registration and login, password recovery, and Stripe test-mode checkout.
+
+## Features
+
+- Gym pages for the home, about, contact, admission, and trainers sections
+- Product catalog with Stripe Checkout integration
+- Account signup and login using email or phone number
+- Email-based password reset
+- SQLite storage for user accounts and password reset tokens
+
 ## Run the website and checkout backend
 
 1. Install Python 3.10 or later.
