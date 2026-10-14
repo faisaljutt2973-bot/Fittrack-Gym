@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Account | FITTRACK GYM</title>
+    <link rel="stylesheet" href="{{ url_for('static_page', filename='style.css') }}">
+</head>
+
+<body>
+    <header class="header">
+        <nav class="navbar">
+            <a href="{{ url_for('index') }}" class="logo">FITTRACK<small>FITNESS CLUB</small></a>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}">Home</a>
+                <a href="{{ url_for('products_page') }}">Products</a>
+                <a href="{{ url_for('static_page', filename='contact.html') }}">Contact Us</a>
+            </div>
+            <div class="nav-buttons">
+                <form method="post" action="{{ url_for('logout') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-login">Log Out</button>
+                </form>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="section auth-section">
+            <div class="page-shell auth-layout">
+                <div class="auth-card">
+                    <span class="section-label">Member account</span>
+                    <h1>Welcome, {{ user["first_name"] }}</h1>
+                    <div class="account-details">
+                        <p><strong>Email</strong><span>{{ user["email"] }}</span></p>
+                        <p><strong>Phone</strong><span>{{ user["phone"] }}</span></p>
+                        <p><strong>Fitness goal</strong><span>{{ user["goal"] }}</span></p>
+                    </div>
+                    <a href="{{ url_for('products_page') }}" class="btn btn-primary">Explore Products</a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>&copy; 2026 <span>FITTRACK GYM</span>. All rights reserved.</p>
+        <p class="footer-tagline">TRAIN HARD. STAY HUMBLE.</p>
+    </footer>
+</body>
+</html>

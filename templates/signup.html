@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up | FITTRACK GYM</title>
+    <link rel="stylesheet" href="{{ url_for('static_page', filename='style.css') }}">
+</head>
+
+<body>
+    <header class="header">
+        <nav class="navbar">
+            <a href="{{ url_for('index') }}" class="logo">FITTRACK<small>FITNESS CLUB</small></a>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}">Home</a>
+                <a href="{{ url_for('static_page', filename='about.html') }}">About Us</a>
+                <a href="{{ url_for('static_page', filename='contact.html') }}">Contact Us</a>
+                <a href="{{ url_for('static_page', filename='admission.html') }}">Join Us</a>
+                <a href="{{ url_for('static_page', filename='trainers.html') }}">Trainers</a>
+                <a href="{{ url_for('products_page') }}">Products</a>
+            </div>
+            <div class="nav-buttons">
+                <a href="{{ url_for('login_page') }}" class="btn btn-login">Login</a>
+                <a href="{{ url_for('signup_page') }}" class="btn btn-signup active-btn">Sign Up</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="section auth-section">
+            <div class="page-shell auth-layout">
+                <div class="auth-card">
+                    <span class="section-label">Join the club</span>
+                    <h1>Create your account</h1>
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% for category, message in messages %}
+                            <p class="auth-message {{ category }}" role="status">{{ message }}</p>
+                        {% endfor %}
+                    {% endwith %}
+                    <form class="form-grid" method="post" action="{{ url_for('signup_page') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <div class="form-group">
+                            <label for="signup-first">First name</label>
+                            <input id="signup-first" name="first_name" type="text" autocomplete="given-name" maxlength="80" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="signup-last">Last name</label>
+                            <input id="signup-last" name="last_name" type="text" autocomplete="family-name" maxlength="80" required>
+                        </div>
+                        <div class="form-group full">
+                            <label for="signup-email">Email address <span class="field-hint">Used for password recovery</span></label>
+                            <input id="signup-email" name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@example.com" required>
+                        </div>
+                        <div class="form-group full">
+                            <label for="signup-phone">Phone number</label>
+                            <input id="signup-phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="+1 555 123 4567" required>
+                            <small class="field-hint">Include your country code. You can use this number or your email to log in.</small>
+                        </div>
+                        <div class="form-group full">
+                            <label for="signup-password">Password</label>
+                            <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+                            <small class="field-hint">Use at least 12 characters.</small>
+                        </div>
+                        <div class="form-group full">
+                            <label for="signup-goal">Primary goal</label>
+                            <select id="signup-goal" name="goal" required>
+                                <option value="Build muscle">Build muscle</option>
+                                <option value="Lose weight">Lose weight</option>
+                                <option value="Improve endurance">Improve endurance</option>
+                                <option value="General fitness">General fitness</option>
+                            </select>
+                        </div>
+                        <div class="form-actions full">
+                            <button type="submit" class="btn btn-primary">Create Account</button>
+                        </div>
+                    </form>
+                    <p class="auth-switch">Already a member? <a href="{{ url_for('login_page') }}">Login here</a></p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>&copy; 2026 <span>FITTRACK GYM</span>. All rights reserved.</p>
+        <p class="footer-tagline">TRAIN HARD. STAY HUMBLE.</p>
+    </footer>
+</body>
+</html>

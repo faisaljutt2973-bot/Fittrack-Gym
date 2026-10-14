@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | FITTRACK GYM</title>
+    <link rel="stylesheet" href="{{ url_for('static_page', filename='style.css') }}">
+</head>
+
+<body>
+    <header class="header">
+        <nav class="navbar">
+            <a href="{{ url_for('index') }}" class="logo">FITTRACK<small>FITNESS CLUB</small></a>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}">Home</a>
+                <a href="{{ url_for('static_page', filename='about.html') }}">About Us</a>
+                <a href="{{ url_for('static_page', filename='contact.html') }}">Contact Us</a>
+                <a href="{{ url_for('static_page', filename='admission.html') }}">Join Us</a>
+                <a href="{{ url_for('static_page', filename='trainers.html') }}">Trainers</a>
+                <a href="{{ url_for('products_page') }}">Products</a>
+            </div>
+            <div class="nav-buttons">
+                <a href="{{ url_for('login_page') }}" class="btn btn-login active-btn">Login</a>
+                <a href="{{ url_for('signup_page') }}" class="btn btn-signup">Sign Up</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="section auth-section">
+            <div class="page-shell auth-layout">
+                <div class="auth-card">
+                    <span class="section-label">Welcome back</span>
+                    <h1>Login to your account</h1>
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% for category, message in messages %}
+                            <p class="auth-message {{ category }}" role="status">{{ message }}</p>
+                        {% endfor %}
+                    {% endwith %}
+                    <form class="form-grid" method="post" action="{{ url_for('login_page') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <div class="form-group full">
+                            <label for="login-identifier">Email address or phone number</label>
+                            <input id="login-identifier" name="identifier" type="text" autocomplete="username" placeholder="you@example.com or +1 555 123 4567" required>
+                        </div>
+                        <div class="form-group full">
+                            <label for="login-password">Password</label>
+                            <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+                        </div>
+                        <div class="form-options full">
+                            <a href="{{ url_for('forgot_password') }}">Forgot password?</a>
+                        </div>
+                        <div class="form-actions full">
+                            <button type="submit" class="btn btn-primary">Login</button>
+                        </div>
+                    </form>
+                    <p class="auth-switch">Need an account? <a href="{{ url_for('signup_page') }}">Sign up here</a></p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>&copy; 2026 <span>FITTRACK GYM</span>. All rights reserved.</p>
+        <p class="footer-tagline">TRAIN HARD. STAY HUMBLE.</p>
+    </footer>
+</body>
+</html>

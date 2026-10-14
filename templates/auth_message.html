@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} | FITTRACK GYM</title>
+    <link rel="stylesheet" href="{{ url_for('static_page', filename='style.css') }}">
+</head>
+
+<body>
+    <main class="checkout-result">
+        <section class="auth-card">
+            <a href="{{ url_for('index') }}" class="logo">FITTRACK<small>FITNESS CLUB</small></a>
+            <span class="section-label">FITTRACK account security</span>
+            <h1>{{ title }}</h1>
+            <p class="auth-description">{{ message }}</p>
+            <a href="{{ action_url }}" class="btn btn-primary">{{ action_label }}</a>
+        </section>
+    </main>
+</body>
+</html>
