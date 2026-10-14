@@ -1,26 +1,29 @@
 import hashlib
 import os
-import sqlite3
-import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
+
+import mongomock
 
 import app as fittrack
 
 
 class FittrackBackendTests(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.mongo_client = mongomock.MongoClient()
         fittrack.app.config.update(
             TESTING=True,
             SECRET_KEY="test-session-key",
-            DATABASE=os.path.join(self.temp_dir.name, "test.sqlite3"),
+            MONGO_CLIENT=self.mongo_client,
+            MONGO_DB_NAME="fittrack_test",
         )
+        fittrack.app.extensions.pop("fittrack_mongo_indexes_key", None)
+        self.db = self.mongo_client["fittrack_test"]
         self.client = fittrack.app.test_client()
 
     def tearDown(self):
-        self.temp_dir.cleanup()
+        self.mongo_client.close()
 
     def create_csrf_token(self):
         response = self.client.get("/signup.html")
@@ -42,6 +45,24 @@ class FittrackBackendTests(unittest.TestCase):
                 "goal": "Build muscle",
             },
         )
+
+    def test_configured_mongodb_uri_is_well_formed(self):
+        uri = fittrack.app.config["MONGO_URI"]
+
+        # Guards against placeholder-style URIs such as
+        # mongodb+srv://user:<password>@host/ where angle brackets leak
+        # into the credentials and make authentication fail.
+        self.assertTrue(uri.startswith(("mongodb://", "mongodb+srv://")))
+        self.assertNotIn("<", uri)
+        self.assertNotIn(">", uri)
+        self.assertIn("://", uri)
+        _, remainder = uri.split("://", 1)
+        self.assertIn("@", remainder)
+        userinfo, host = remainder.rsplit("@", 1)
+        username, _, password = userinfo.partition(":")
+        self.assertTrue(username, "MongoDB URI must include a username")
+        self.assertTrue(password, "MongoDB URI must include a password")
+        self.assertTrue(host.split("/")[0], "MongoDB URI must include a host")
 
     def test_product_api_returns_server_catalog_and_prices(self):
         response = self.client.get("/api/products")
@@ -89,12 +110,8 @@ class FittrackBackendTests(unittest.TestCase):
         account = self.client.get("/account")
         self.assertEqual(account.status_code, 200)
         self.assertIn(b"+15551234567", account.data)
-        with sqlite3.connect(fittrack.app.config["DATABASE"]) as db:
-            password_hash = db.execute(
-                "SELECT password_hash FROM users WHERE email = ?",
-                ("member@example.com",),
-            ).fetchone()[0]
-        self.assertNotEqual(password_hash, "Correct-Horse-42!")
+        user = self.db.users.find_one({"email": "member@example.com"})
+        self.assertNotEqual(user["password_hash"], "Correct-Horse-42!")
 
     def test_signup_rejects_short_password_and_duplicate_contact(self):
         csrf = self.create_csrf_token()
@@ -119,6 +136,13 @@ class FittrackBackendTests(unittest.TestCase):
         duplicate = self.signup(email="different@example.com")
         self.assertEqual(duplicate.status_code, 400)
         self.assertIn(b"already uses", duplicate.data)
+
+        duplicate_email = self.signup(
+            email="MEMBER@example.com",
+            phone="+15551234568",
+        )
+        self.assertEqual(duplicate_email.status_code, 400)
+        self.assertIn(b"already uses", duplicate_email.data)
 
     def test_signup_rejects_missing_csrf_token(self):
         response = self.client.post(
@@ -214,16 +238,20 @@ class FittrackBackendTests(unittest.TestCase):
 
     def test_password_reset_is_one_time_and_invalidates_existing_sessions(self):
         self.assertEqual(self.signup().status_code, 302)
-        with sqlite3.connect(fittrack.app.config["DATABASE"]) as db:
-            db.execute(
-                "INSERT INTO password_resets (token_hash, user_id, expires_at, created_at) "
-                "VALUES (?, 1, ?, ?)",
-                (
-                    hashlib.sha256(b"reset-token").hexdigest(),
-                    (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
+        user = self.db.users.find_one({"email": "member@example.com"})
+        now = datetime.now(timezone.utc)
+        self.db.users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$set": {
+                    "password_reset": {
+                        "token_hash": hashlib.sha256(b"reset-token").hexdigest(),
+                        "expires_at": now + timedelta(minutes=30),
+                        "created_at": now,
+                    }
+                }
+            },
+        )
 
         csrf = self.create_csrf_token()
         response = self.client.post(

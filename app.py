@@ -4,21 +4,21 @@ import os
 import re
 import secrets
 import smtplib
-import sqlite3
 import ssl
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlparse
 
 import stripe
+from bson import ObjectId
+from pymongo import MongoClient, ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-INSTANCE_DIR = ROOT_DIR / "instance"
 ALLOWED_STATIC_SUFFIXES = {".css", ".html", ".ico", ".jpeg", ".jpg", ".js", ".png", ".svg", ".webp"}
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_PATTERN = re.compile(r"^\+?[1-9]\d{6,14}$")
@@ -63,10 +63,13 @@ PRODUCTS = {
 }
 
 app = Flask(__name__, template_folder=str(ROOT_DIR / "templates"))
-INSTANCE_DIR.mkdir(exist_ok=True)
 app.config.update(
     SECRET_KEY=os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32),
-    DATABASE=str(INSTANCE_DIR / "fittrack.sqlite3"),
+    MONGO_URI=os.environ.get(
+        "MONGODB_URI",
+        "mongodb+srv://faisaljutt2973_db_user:Rc61yoAB4uwweJ3U@cluster1.j1tmeoi.mongodb.net/",
+    ),
+    MONGO_DB_NAME=os.environ.get("MONGODB_DATABASE", "fittrack_gym"),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("PUBLIC_BASE_URL", "").lower().startswith("https://"),
@@ -74,40 +77,20 @@ app.config.update(
 )
 
 
-@contextmanager
 def get_db():
-    connection = sqlite3.connect(app.config["DATABASE"])
-    connection.row_factory = sqlite3.Row
-    try:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                first_name TEXT NOT NULL,
-                last_name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                phone TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                goal TEXT NOT NULL,
-                auth_version INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS password_resets (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                expires_at TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            """
-        )
-        yield connection
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
+    client = app.config.get("MONGO_CLIENT")
+    if client is None:
+        client = MongoClient(app.config["MONGO_URI"])
+        app.config["MONGO_CLIENT"] = client
+
+    database = client[app.config["MONGO_DB_NAME"]]
+    index_key = (id(client), database.name)
+    if app.extensions.get("fittrack_mongo_indexes_key") != index_key:
+        database.users.create_index("email", unique=True)
+        database.users.create_index("phone", unique=True)
+        database.users.create_index("password_reset.token_hash", unique=True, sparse=True)
+        app.extensions["fittrack_mongo_indexes_key"] = index_key
+    return database
 
 
 def normalize_phone(value):
@@ -192,15 +175,13 @@ def render_auth_template(template, **context):
 def get_logged_in_user():
     user_id = session.get("user_id")
     auth_version = session.get("auth_version")
-    if not isinstance(user_id, int) or not isinstance(auth_version, int):
+    if not isinstance(user_id, str) or not ObjectId.is_valid(user_id) or not isinstance(auth_version, int):
         return None
 
-    with get_db() as db:
-        user = db.execute(
-            "SELECT id, first_name, last_name, email, phone, goal, auth_version "
-            "FROM users WHERE id = ?",
-            (user_id,),
-        ).fetchone()
+    user = get_db().users.find_one(
+        {"_id": ObjectId(user_id)},
+        {"first_name": 1, "last_name": 1, "email": 1, "phone": 1, "goal": 1, "auth_version": 1},
+    )
     if user is None or user["auth_version"] != auth_version:
         session.clear()
         return None
@@ -249,31 +230,28 @@ def signup_page():
     elif goal not in valid_goals:
         flash("Choose a valid fitness goal.", "error")
     else:
-        with get_db() as db:
-            try:
-                cursor = db.execute(
-                    "INSERT INTO users "
-                    "(first_name, last_name, email, phone, password_hash, goal, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        first_name,
-                        last_name,
-                        email,
-                        phone,
-                        generate_password_hash(password),
-                        goal,
-                        datetime.now(timezone.utc).isoformat(),
-                    ),
-                )
-            except sqlite3.IntegrityError:
-                flash("An account already uses that email address or phone number.", "error")
-            else:
-                session.clear()
-                session["user_id"] = cursor.lastrowid
-                session["auth_version"] = 1
-                session.permanent = True
-                flash("Your FITTRACK account is ready.", "success")
-                return redirect(url_for("account_page"))
+        try:
+            result = get_db().users.insert_one(
+                {
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "email": email,
+                    "phone": phone,
+                    "password_hash": generate_password_hash(password),
+                    "goal": goal,
+                    "auth_version": 1,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
+        except DuplicateKeyError:
+            flash("An account already uses that email address or phone number.", "error")
+        else:
+            session.clear()
+            session["user_id"] = str(result.inserted_id)
+            session["auth_version"] = 1
+            session.permanent = True
+            flash("Your FITTRACK account is ready.", "success")
+            return redirect(url_for("account_page"))
 
     return render_auth_template("signup.html"), 400
 
@@ -290,19 +268,17 @@ def login_page():
     normalized_phone = normalize_phone(identifier)
     lookup = normalized_phone or identifier.lower()
 
-    with get_db() as db:
-        user = db.execute(
-            "SELECT id, password_hash, auth_version FROM users "
-            "WHERE email = ? COLLATE NOCASE OR phone = ?",
-            (lookup, lookup),
-        ).fetchone()
+    user = get_db().users.find_one(
+        {"$or": [{"email": lookup.lower()}, {"phone": lookup}]},
+        {"password_hash": 1, "auth_version": 1},
+    )
 
     if user is None or not check_password_hash(user["password_hash"], password):
         flash("The email/phone number or password is incorrect.", "error")
         return render_auth_template("login.html"), 401
 
     session.clear()
-    session["user_id"] = user["id"]
+    session["user_id"] = str(user["_id"])
     session["auth_version"] = user["auth_version"]
     session.permanent = True
     return redirect(url_for("account_page"))
@@ -323,35 +299,36 @@ def forgot_password():
         return render_auth_template("forgot_password.html")
 
     if EMAIL_PATTERN.fullmatch(email) and len(email) <= 254:
-        with get_db() as db:
-            user = db.execute(
-                "SELECT id, email FROM users WHERE email = ? COLLATE NOCASE",
-                (email,),
-            ).fetchone()
-            if user:
-                token = secrets.token_urlsafe(32)
-                token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-                created_at = datetime.now(timezone.utc)
-                db.execute("DELETE FROM password_resets WHERE user_id = ?", (user["id"],))
-                db.execute(
-                    "INSERT INTO password_resets (token_hash, user_id, expires_at, created_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (
-                        token_hash,
-                        user["id"],
-                        (created_at + RESET_TOKEN_TTL).isoformat(),
-                        created_at.isoformat(),
-                    ),
+        db = get_db()
+        user = db.users.find_one({"email": email}, {"email": 1})
+        if user:
+            token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            created_at = datetime.now(timezone.utc)
+            db.users.update_one(
+                {"_id": user["_id"]},
+                {
+                    "$set": {
+                        "password_reset": {
+                            "token_hash": token_hash,
+                            "expires_at": created_at + RESET_TOKEN_TTL,
+                            "created_at": created_at,
+                        }
+                    }
+                },
+            )
+            reset_url = (
+                f"{settings['PUBLIC_BASE_URL']}"
+                f"{url_for('reset_password', token=token)}"
+            )
+            try:
+                send_password_reset_email(user["email"], reset_url, settings)
+            except (OSError, smtplib.SMTPException, ValueError):
+                app.logger.exception("Sending a FITTRACK password reset email failed.")
+                db.users.update_one(
+                    {"_id": user["_id"], "password_reset.token_hash": token_hash},
+                    {"$unset": {"password_reset": ""}},
                 )
-                reset_url = (
-                    f"{settings['PUBLIC_BASE_URL']}"
-                    f"{url_for('reset_password', token=token)}"
-                )
-                try:
-                    send_password_reset_email(user["email"], reset_url, settings)
-                except (OSError, smtplib.SMTPException, ValueError):
-                    app.logger.exception("Sending a FITTRACK password reset email failed.")
-                    db.execute("DELETE FROM password_resets WHERE token_hash = ?", (token_hash,))
 
     flash(RESET_REQUEST_MESSAGE, "success")
     return render_auth_template("forgot_password.html")
@@ -360,16 +337,23 @@ def forgot_password():
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
 def reset_password(token):
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    with get_db() as db:
-        reset = db.execute(
-            "SELECT user_id, expires_at FROM password_resets WHERE token_hash = ?",
-            (token_hash,),
-        ).fetchone()
+    db = get_db()
+    user = db.users.find_one(
+        {"password_reset.token_hash": token_hash},
+        {"password_reset.expires_at": 1},
+    )
+    reset = user.get("password_reset") if user else None
+    now = datetime.now(timezone.utc)
 
-    if reset is None or datetime.fromisoformat(reset["expires_at"]) <= datetime.now(timezone.utc):
+    expires_at = reset["expires_at"] if reset else None
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if reset is None or expires_at <= now:
         if reset is not None:
-            with get_db() as db:
-                db.execute("DELETE FROM password_resets WHERE token_hash = ?", (token_hash,))
+            db.users.update_one(
+                {"_id": user["_id"], "password_reset.token_hash": token_hash},
+                {"$unset": {"password_reset": ""}},
+            )
         return render_auth_template("reset_password.html", token=token, token_valid=False), 400
 
     if request.method == "GET":
@@ -386,12 +370,22 @@ def reset_password(token):
         flash("The passwords do not match.", "error")
         return render_auth_template("reset_password.html", token=token, token_valid=True), 400
 
-    with get_db() as db:
-        db.execute(
-            "UPDATE users SET password_hash = ?, auth_version = auth_version + 1 WHERE id = ?",
-            (generate_password_hash(password), reset["user_id"]),
-        )
-        db.execute("DELETE FROM password_resets WHERE user_id = ?", (reset["user_id"],))
+    updated_user = db.users.find_one_and_update(
+        {
+            "_id": user["_id"],
+            "password_reset.token_hash": token_hash,
+            "password_reset.expires_at": {"$gt": now},
+        },
+        {
+            "$set": {"password_hash": generate_password_hash(password)},
+            "$inc": {"auth_version": 1},
+            "$unset": {"password_reset": ""},
+        },
+        return_document=ReturnDocument.AFTER,
+        projection={"_id": 1},
+    )
+    if updated_user is None:
+        return render_auth_template("reset_password.html", token=token, token_valid=False), 400
     session.clear()
     flash("Your password was reset. Please log in with your new password.", "success")
     return redirect(url_for("login_page"))
@@ -433,7 +427,7 @@ def create_checkout_session():
 
     try:
         stripe.api_key = secret_key
-        session = stripe.checkout.Session.create(
+        checkout_session = stripe.checkout.Session.create(
             mode="payment",
             customer_creation="always",
             line_items=[
@@ -463,7 +457,7 @@ def create_checkout_session():
             action_label="Back to products",
         ), 502
 
-    if not session.url:
+    if not checkout_session.url:
         app.logger.error("Stripe returned a Checkout session without a redirect URL.")
         return render_template(
             "checkout_message.html",
@@ -473,7 +467,7 @@ def create_checkout_session():
             action_label="Back to products",
         ), 502
 
-    return redirect(session.url, code=303)
+    return redirect(checkout_session.url, code=303)
 
 
 @app.get("/checkout/success")
@@ -494,7 +488,7 @@ def checkout_success():
 
     try:
         stripe.api_key = secret_key
-        session = stripe.checkout.Session.retrieve(session_id)
+        checkout_session = stripe.checkout.Session.retrieve(session_id)
     except stripe.StripeError:
         app.logger.exception("Stripe Checkout payment verification failed.")
         return render_template(
@@ -505,7 +499,7 @@ def checkout_success():
             action_label="Back to products",
         ), 502
 
-    if session.status != "complete" or session.payment_status != "paid":
+    if checkout_session.status != "complete" or checkout_session.payment_status != "paid":
         return render_template(
             "checkout_message.html",
             title="Payment not confirmed",
